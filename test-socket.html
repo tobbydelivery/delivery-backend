@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Socket Test</title>
+</head>
+<body>
+  <h2>Real-Time Tracking Test</h2>
+  <button onclick="sendLocation()">Send Location Update</button>
+  <div id="log"></div>
+
+  <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+  <script>
+    const socket = io("http://localhost:3000");
+
+    socket.on("connect", () => {
+      log("✅ Connected! ID: " + socket.id);
+      socket.emit("join_order_room", { orderId: "69ac71ff82a9d0243c8dba3d" });
+    });
+
+    socket.on("location_update", (data) => {
+      log("📍 Location Update: " + JSON.stringify(data));
+    });
+
+    socket.on("disconnect", () => {
+      log("❌ Disconnected");
+    });
+
+    function sendLocation() {
+      socket.emit("agent_location_update", {
+        orderId: "69ac71ff82a9d0243c8dba3d",
+        agentId: "69ac75cb82a9d0243c8dba4a",
+        coordinates: [3.38, 6.55],
+        speed: 45,
+        heading: 90
+      });
+      log("📤 Location sent!");
+    }
+
+    function log(msg) {
+      document.getElementById("log").innerHTML += "<p>" + msg + "</p>";
+    }
+  </script>
+</body>
+</html>
