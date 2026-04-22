@@ -50,6 +50,8 @@ const orderSchema = new mongoose.Schema(
     paymentStatus: { type: String, enum: ["unpaid", "pending", "paid"], default: "unpaid" },
     paymentReference: { type: String },
     paidAt: { type: Date },
+    discountCode: { type: String },
+    discountAmount: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

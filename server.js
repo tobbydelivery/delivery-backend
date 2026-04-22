@@ -7,6 +7,9 @@ const helmet = require("helmet");
 const morgan = require("morgan");
 const rateLimit = require("express-rate-limit");
 const connectDB = require("./src/config/db");
+const discountRoutes = require("./src/routes/discount.routes");
+const reviewRoutes = require("./src/routes/review.routes");
+const analyticsRoutes = require("./src/routes/analytics.routes");
 
 // Routes
 const authRoutes = require("./src/routes/auth.routes");
@@ -55,6 +58,9 @@ app.use("/api/agents", agentRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/pricing", pricingRoutes);
 app.use("/api/invoices", invoiceRoutes);
+app.use("/api/discounts", discountRoutes);
+app.use("/api/reviews", reviewRoutes);
+app.use("/api/analytics", analyticsRoutes);
 
 // Health check route
 app.get("/", (req, res) => {
