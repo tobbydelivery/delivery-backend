@@ -8,16 +8,38 @@ const {
   notifyOrderDelayed,
   notifyAgentAssigned
 } = require("../services/notification.service");
+const { sendOrderStatusPush, sendPushNotification } = require("../services/push.service");
 
 // Geocode an address
 const geocodeAddress = async (address) => {
   try {
-    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`;
-    const res = await axios.get(url, { headers: { "User-Agent": "DeliveryBackend/1.0" } });
+    // Try Google Maps first
+    if (process.env.GOOGLE_MAPS_API_KEY) {
+      const { Client } = require("@googlemaps/google-maps-services-js");
+      const client = new Client({});
+      const response = await client.geocode({
+        params: { address, key: process.env.GOOGLE_MAPS_API_KEY, region: "ng" }
+      });
+      if (response.data.results.length > 0) {
+        const { lat, lng } = response.data.results[0].geometry.location;
+        return [lng, lat];
+      }
+    }
+  } catch (err) {
+    console.error("Google geocode error:", err.message);
+  }
+
+  // Fallback to Nominatim
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}&countrycodes=ng`;
+    const res = await axios.get(url, { headers: { "User-Agent": "STexLogistics/1.0" } });
     if (res.data.length > 0) {
       return [parseFloat(res.data[0].lon), parseFloat(res.data[0].lat)];
     }
-  } catch (err) {}
+  } catch (err) {
+    console.error("Nominatim geocode error:", err.message);
+  }
+
   return null;
 };
 
@@ -26,6 +48,7 @@ const createOrder = async (req, res) => {
   try {
     const { sender, recipient, package: pkg } = req.body;
 
+    // Geocode addresses
     const senderCoords = await geocodeAddress(sender.address);
     const recipientCoords = await geocodeAddress(recipient.address);
 
@@ -37,20 +60,38 @@ const createOrder = async (req, res) => {
       recipient,
       package: pkg,
       createdBy: req.user._id,
-      statusHistory: [{ status: "pending", note: "Order created", updatedBy: req.user._id }],
+      statusHistory: [{ status: "pending", note: "Order created", updatedBy: req.user._id }]
     });
 
+    // Update user stats
+    await User.findByIdAndUpdate(req.user._id, { $inc: { totalOrders: 1 } });
+
+    // Emit socket event
     const io = req.app.get("io");
     if (io) io.emit("new_order", order);
 
+    // Get user with device token
     const user = await User.findById(req.user._id);
+
     if (user) {
       const orderData = {
         trackingNumber: order.trackingNumber || order._id,
         pickupAddress: sender.address,
         deliveryAddress: recipient.address
       };
-      await notifyOrderCreated(orderData, user).catch(err => console.error("Notification error:", err.message));
+
+      // Send email notification
+      notifyOrderCreated(orderData, user).catch(err => console.error("Email error:", err.message));
+
+      // Send push notification
+      if (user.deviceToken && user.pushNotifications) {
+        sendPushNotification({
+          token: user.deviceToken,
+          title: "📦 Order Placed Successfully!",
+          body: `Your order ${order.trackingNumber} has been received. We will pick it up shortly!`,
+          data: { trackingNumber: order.trackingNumber, screen: "Track" }
+        }).catch(err => console.error("Push error:", err.message));
+      }
     }
 
     res.status(201).json({ message: "Order created successfully", order });
@@ -66,12 +107,31 @@ const getOrders = async (req, res) => {
     if (req.user.role === "user") query.createdBy = req.user._id;
     if (req.user.role === "agent") query.assignedAgent = req.user._id;
 
-    const orders = await Order.find(query)
-      .populate("createdBy", "name email")
-      .populate("assignedAgent", "name email phone")
-      .sort({ createdAt: -1 });
+    // Filters
+    if (req.query.status) query.status = req.query.status;
+    if (req.query.paymentStatus) query.paymentStatus = req.query.paymentStatus;
 
-    res.json({ count: orders.length, orders });
+    // Pagination
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const skip = (page - 1) * limit;
+
+    const orders = await Order.find(query)
+      .populate("createdBy", "name email phone")
+      .populate("assignedAgent", "name email phone")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const total = await Order.countDocuments(query);
+
+    res.json({
+      count: orders.length,
+      total,
+      page,
+      pages: Math.ceil(total / limit),
+      orders
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -81,10 +141,19 @@ const getOrders = async (req, res) => {
 const getOrder = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id)
-      .populate("createdBy", "name email")
+      .populate("createdBy", "name email phone")
       .populate("assignedAgent", "name email phone");
 
     if (!order) return res.status(404).json({ error: "Order not found" });
+
+    // Only allow owner, agent or admin
+    if (
+      req.user.role === "user" &&
+      order.createdBy._id.toString() !== req.user._id.toString()
+    ) {
+      return res.status(403).json({ error: "Not authorized" });
+    }
+
     res.json({ order });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -95,14 +164,24 @@ const getOrder = async (req, res) => {
 const updateStatus = async (req, res) => {
   try {
     const { status, note } = req.body;
-    const order = await Order.findById(req.params.id).populate("createdBy", "name email phone");
+    const order = await Order.findById(req.params.id)
+      .populate("createdBy", "name email phone deviceToken pushNotifications");
+
     if (!order) return res.status(404).json({ error: "Order not found" });
 
+    const previousStatus = order.status;
     order.status = status;
     order.statusHistory.push({ status, note, updatedBy: req.user._id });
-    if (status === "delivered") order.deliveredAt = new Date();
+    if (status === "delivered") {
+      order.deliveredAt = new Date();
+      // Update user stats
+      await User.findByIdAndUpdate(order.createdBy._id, {
+        $inc: { totalSpent: order.price || 0 }
+      });
+    }
     await order.save();
 
+    // Emit socket event
     const io = req.app.get("io");
     if (io) io.to(order._id.toString()).emit("status_update", { orderId: order._id, status, note });
 
@@ -114,12 +193,22 @@ const updateStatus = async (req, res) => {
     };
 
     if (user) {
+      // Send email notifications
       if (status === "picked_up") {
-        await notifyOrderPickedUp(orderData, user).catch(err => console.error("Notification error:", err.message));
+        notifyOrderPickedUp(orderData, user).catch(err => console.error("Email error:", err.message));
       } else if (status === "delivered") {
-        await notifyOrderDelivered(orderData, user).catch(err => console.error("Notification error:", err.message));
+        notifyOrderDelivered(orderData, user).catch(err => console.error("Email error:", err.message));
       } else if (status === "delayed") {
-        await notifyOrderDelayed(orderData, user, note).catch(err => console.error("Notification error:", err.message));
+        notifyOrderDelayed(orderData, user, note).catch(err => console.error("Email error:", err.message));
+      }
+
+      // Send push notification
+      if (user.deviceToken && user.pushNotifications) {
+        sendOrderStatusPush({
+          deviceToken: user.deviceToken,
+          status,
+          trackingNumber: order.trackingNumber
+        }).catch(err => console.error("Push error:", err.message));
       }
     }
 
@@ -133,21 +222,38 @@ const updateStatus = async (req, res) => {
 const assignAgent = async (req, res) => {
   try {
     const { agentId } = req.body;
+
+    const agent = await User.findById(agentId);
+    if (!agent || agent.role !== "agent") {
+      return res.status(400).json({ error: "Invalid agent" });
+    }
+
     const order = await Order.findByIdAndUpdate(
       req.params.id,
       { assignedAgent: agentId },
       { new: true }
-    ).populate("assignedAgent", "name email phone");
+    ).populate("assignedAgent", "name email phone deviceToken");
 
     if (!order) return res.status(404).json({ error: "Order not found" });
 
+    // Notify agent via email
     if (order.assignedAgent) {
       const orderData = {
         trackingNumber: order.trackingNumber || order._id,
         pickupAddress: order.sender?.address,
         deliveryAddress: order.recipient?.address
       };
-      await notifyAgentAssigned(orderData, order.assignedAgent).catch(err => console.error("Notification error:", err.message));
+      notifyAgentAssigned(orderData, order.assignedAgent).catch(err => console.error("Email error:", err.message));
+
+      // Send push to agent
+      if (order.assignedAgent.deviceToken) {
+        sendPushNotification({
+          token: order.assignedAgent.deviceToken,
+          title: "🚚 New Delivery Assigned!",
+          body: `Order ${order.trackingNumber} has been assigned to you. Please pick it up!`,
+          data: { trackingNumber: order.trackingNumber, screen: "Orders" }
+        }).catch(err => console.error("Push error:", err.message));
+      }
     }
 
     res.json({ message: "Agent assigned", order });
@@ -156,4 +262,41 @@ const assignAgent = async (req, res) => {
   }
 };
 
-module.exports = { createOrder, getOrders, getOrder, updateStatus, assignAgent };
+// Cancel order
+const cancelOrder = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ error: "Order not found" });
+
+    // Only pending orders can be cancelled
+    if (!["pending"].includes(order.status)) {
+      return res.status(400).json({ error: "Only pending orders can be cancelled" });
+    }
+
+    // Only order owner or admin can cancel
+    if (
+      req.user.role !== "admin" &&
+      order.createdBy.toString() !== req.user._id.toString()
+    ) {
+      return res.status(403).json({ error: "Not authorized to cancel this order" });
+    }
+
+    order.status = "cancelled";
+    order.statusHistory.push({
+      status: "cancelled",
+      note: req.body.reason || "Cancelled by user",
+      updatedBy: req.user._id
+    });
+    await order.save();
+
+    // Emit socket event
+    const io = req.app.get("io");
+    if (io) io.to(order._id.toString()).emit("status_update", { orderId: order._id, status: "cancelled" });
+
+    res.json({ message: "Order cancelled successfully", order });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+module.exports = { createOrder, getOrders, getOrder, updateStatus, assignAgent, cancelOrder };
