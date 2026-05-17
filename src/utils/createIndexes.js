@@ -18,20 +18,10 @@ const createIndexes = async () => {
     // User indexes
     await User.collection.createIndex({ email: 1 }, { unique: true, background: true });
     await User.collection.createIndex({ role: 1, isActive: 1 }, { background: true });
-    await User.collection.createIndex({ referralCode: 1 }, { sparse: true, background: true });
-    await User.collection.createIndex({ deviceToken: 1 }, { sparse: true, background: true });
-
-    // Review indexes
-    await Review.collection.createIndex({ order: 1 }, { background: true });
-    await Review.collection.createIndex({ agent: 1 }, { background: true });
-    await Review.collection.createIndex({ user: 1 }, { background: true });
-
-    // Discount indexes
-    await Discount.collection.createIndex({ code: 1 }, { unique: true, background: true });
-    await Discount.collection.createIndex({ isActive: 1, expiresAt: 1 }, { background: true });
-
-    console.log("✅ Database indexes created successfully");
-  } catch (err) {
+ try {
+    await User.collection.dropIndex("referralCode_1");
+  } catch (e) {}
+    await User.collection.createIndex({ referralCode: 1 }, { unique: true, sparse: true, background: true });
     console.error("❌ Index creation error:", err.message);
   }
 };
