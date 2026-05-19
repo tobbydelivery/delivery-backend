@@ -18,6 +18,7 @@ const createIndexes = async () => {
     // User indexes
     await User.collection.createIndex({ email: 1 }, { unique: true, background: true });
     await User.collection.createIndex({ role: 1, isActive: 1 }, { background: true });
+    
    // Drop and recreate referralCode index
    try {
      await User.collection.dropIndex("referralCode_1");
