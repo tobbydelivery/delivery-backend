@@ -3,19 +3,13 @@ const twilio = require("twilio");
 
 // ========== EMAIL SETUP - Port 587 (TLS) instead of 465 (SSL) ==========
 const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
+  host: "smtp-relay.brevo.com",
   port: 587,
-  secure: false, // Use TLS
+  secure: false,
   auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  },
-  tls: {
-    rejectUnauthorized: false
-  },
-  pool: true,
-  maxConnections: 5,
-  maxMessages: 100
+    user: process.env.BREVO_EMAIL,
+    pass: process.env.BREVO_SMTP_KEY
+  }
 });
 
 // Verify transporter on startup
@@ -42,7 +36,7 @@ try {
 const sendEmail = async ({ to, subject, html }) => {
   try {
     await transporter.sendMail({
-      from: `"STeX Logistics" <${process.env.EMAIL_USER}>`,
+      from: `"STeX Logistics" <${process.env.BREVO_EMAIL}>`,
       to,
       subject,
       html
