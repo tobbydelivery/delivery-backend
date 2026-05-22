@@ -9,7 +9,14 @@ const initializeFirebase = () => {
     let serviceAccount;
 
     if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
-      serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+      // Fix escaped newlines in private key
+      const jsonString = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
+        .replace(/\\n/g, "\n")
+        .replace(/\n/g, "\\n");
+      
+      serviceAccount = JSON.parse(
+        process.env.FIREBASE_SERVICE_ACCOUNT_JSON.replace(/\\n/g, "\n")
+      );
     } else {
       serviceAccount = require("../../firebase-service-account.json");
     }
