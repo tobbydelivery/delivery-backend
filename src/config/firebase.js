@@ -6,25 +6,20 @@ const initializeFirebase = () => {
   if (firebaseApp) return firebaseApp;
 
   try {
-    let serviceAccount;
+    let credential;
 
-    if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
-      // Fix escaped newlines in private key
-      const jsonString = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
-        .replace(/\\n/g, "\n")
-        .replace(/\n/g, "\\n");
-      
-      serviceAccount = JSON.parse(
-        process.env.FIREBASE_SERVICE_ACCOUNT_JSON.replace(/\\n/g, "\n")
-      );
+    if (process.env.FIREBASE_PRIVATE_KEY) {
+      credential = admin.credential.cert({
+        projectId: process.env.FIREBASE_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n")
+      });
     } else {
-      serviceAccount = require("../../firebase-service-account.json");
+      const serviceAccount = require("../../firebase-service-account.json");
+      credential = admin.credential.cert(serviceAccount);
     }
 
-    firebaseApp = admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
-    });
-
+    firebaseApp = admin.initializeApp({ credential });
     console.log("✅ Firebase initialized successfully");
     return firebaseApp;
   } catch (err) {
