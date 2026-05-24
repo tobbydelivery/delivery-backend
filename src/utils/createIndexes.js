@@ -18,12 +18,14 @@ const createIndexes = async () => {
     await User.collection.createIndex({ role: 1, isActive: 1 }, { background: true });
     await User.collection.createIndex({ deviceToken: 1 }, { sparse: true, background: true });
 
-    // Drop and recreate referralCode index to fix conflict
+    // Create referralCode index safely
     try {
-      await User.collection.dropIndex("referralCode_1");
-      console.log("✅ Dropped old referralCode index");
+      await User.collection.createIndex(
+        { referralCode: 1 },
+        { unique: true, sparse: true, background: true }
+      );
     } catch (e) {
-      // Index might not exist, ignore error
+      // Index already exists, ignore
     }
     await User.collection.createIndex({ referralCode: 1 }, { unique: true, sparse: true, background: true });
 
