@@ -28,6 +28,16 @@ const invoiceRoutes = require("./src/routes/invoice.routes");
 const discountRoutes = require("./src/routes/discount.routes");
 const reviewRoutes = require("./src/routes/review.routes");
 const analyticsRoutes = require("./src/routes/analytics.routes");
+const Sentry = require("@sentry/node");
+
+Sentry.init({
+  dsn: "https://ab83d00f5555aaafc0c1d5831318c2f8@o4511527597768704.ingest.de.sentry.io/4511527606354000",
+  tracesSampleRate: 1.0,
+  environment: process.env.NODE_ENV || "development"
+});
+
+app.use(Sentry.Handlers.requestHandler());
+app.use(Sentry.Handlers.errorHandler());
 
 const app = express();
 const httpServer = http.createServer(app);

@@ -107,29 +107,47 @@ const getOrders = async (req, res) => {
     if (req.user.role === "user") query.createdBy = req.user._id;
     if (req.user.role === "agent") query.assignedAgent = req.user._id;
 
-    // Filters
     if (req.query.status) query.status = req.query.status;
     if (req.query.paymentStatus) query.paymentStatus = req.query.paymentStatus;
 
-    // Pagination
+    if (req.query.startDate || req.query.endDate) {
+      query.createdAt = {};
+      if (req.query.startDate) query.createdAt.$gte = new Date(req.query.startDate);
+      if (req.query.endDate) query.createdAt.$lte = new Date(req.query.endDate);
+    }
+
+    if (req.query.search) {
+      const searchRegex = new RegExp(req.query.search, "i");
+      query.$or = [
+        { trackingNumber: searchRegex },
+        { "sender.name": searchRegex },
+        { "recipient.name": searchRegex },
+        { "sender.phone": searchRegex },
+        { "recipient.phone": searchRegex }
+      ];
+    }
+
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 50;
+    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
     const skip = (page - 1) * limit;
 
-    const orders = await Order.find(query)
-      .populate("createdBy", "name email phone")
-      .populate("assignedAgent", "name email phone")
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
-
-    const total = await Order.countDocuments(query);
+    const [orders, total] = await Promise.all([
+      Order.find(query)
+        .populate("createdBy", "name email phone")
+        .populate("assignedAgent", "name email phone")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Order.countDocuments(query)
+    ]);
 
     res.json({
       count: orders.length,
       total,
       page,
       pages: Math.ceil(total / limit),
+      hasMore: page < Math.ceil(total / limit),
       orders
     });
   } catch (err) {
@@ -299,4 +317,29 @@ const cancelOrder = async (req, res) => {
   }
 };
 
-module.exports = { createOrder, getOrders, getOrder, updateStatus, assignAgent, cancelOrder };
+const uploadProof = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ error: "Order not found" });
+    if (!req.file) return res.status(400).json({ error: "No photo uploaded" });
+
+    order.proofOfDelivery = {
+      data: req.file.buffer.toString("base64"),
+      contentType: req.file.mimetype,
+      uploadedAt: new Date(),
+      uploadedBy: req.user._id
+    };
+    order.statusHistory.push({
+      status: order.status,
+      note: "Proof of delivery photo uploaded",
+      updatedBy: req.user._id
+    });
+    await order.save();
+
+    res.json({ message: "Proof of delivery uploaded successfully" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+module.exports = { createOrder, getOrders, getOrder, updateStatus, assignAgent, cancelOrder, uploadProof };
