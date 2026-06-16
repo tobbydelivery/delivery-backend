@@ -9,6 +9,7 @@ const mongoSanitize = require("express-mongo-sanitize");
 const compression = require("compression");
 const mongoose = require("mongoose");
 const Sentry = require("@sentry/node");
+const { nodeProfilingIntegration } = require("@sentry/profiling-node");
 const connectDB = require("./src/config/db");
 const errorHandler = require("./src/middleware/error.middleware");
 const logger = require("./src/middleware/logger.middleware");
@@ -39,7 +40,6 @@ Sentry.init({
   tracesSampleRate: 1.0,
   environment: process.env.NODE_ENV || "development"
 });
-app.use(Sentry.Handlers.requestHandler());
 
 // ========== ALLOWED ORIGINS ==========
 const allowedOrigins = [
@@ -157,8 +157,8 @@ app.use((req, res) => {
   });
 });
 
-// ========== SENTRY ERROR HANDLER (must be before errorHandler) ==========
-app.use(Sentry.Handlers.errorHandler());
+// ========== SENTRY ERROR HANDLER ==========
+Sentry.setupExpressErrorHandler(app);
 
 // ========== ERROR HANDLER ==========
 app.use(errorHandler);
