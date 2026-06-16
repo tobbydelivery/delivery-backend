@@ -4,11 +4,11 @@ const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
 const helmet = require("helmet");
-const morgan = require("morgan");
 const rateLimit = require("express-rate-limit");
 const mongoSanitize = require("express-mongo-sanitize");
 const compression = require("compression");
 const mongoose = require("mongoose");
+const Sentry = require("@sentry/node");
 const connectDB = require("./src/config/db");
 const errorHandler = require("./src/middleware/error.middleware");
 const logger = require("./src/middleware/logger.middleware");
@@ -28,19 +28,18 @@ const invoiceRoutes = require("./src/routes/invoice.routes");
 const discountRoutes = require("./src/routes/discount.routes");
 const reviewRoutes = require("./src/routes/review.routes");
 const analyticsRoutes = require("./src/routes/analytics.routes");
-const Sentry = require("@sentry/node");
 
+// ========== INIT APP FIRST ==========
+const app = express();
+const httpServer = http.createServer(app);
+
+// ========== SENTRY (must be after app is created) ==========
 Sentry.init({
   dsn: "https://ab83d00f5555aaafc0c1d5831318c2f8@o4511527597768704.ingest.de.sentry.io/4511527606354000",
   tracesSampleRate: 1.0,
   environment: process.env.NODE_ENV || "development"
 });
-
 app.use(Sentry.Handlers.requestHandler());
-app.use(Sentry.Handlers.errorHandler());
-
-const app = express();
-const httpServer = http.createServer(app);
 
 // ========== ALLOWED ORIGINS ==========
 const allowedOrigins = [
@@ -82,14 +81,14 @@ app.use(cors({
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(compression());
 app.use(logger);
-app.use(express.json({ limit: "10kb" }));
-app.use(express.urlencoded({ extended: true, limit: "10kb" }));
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(mongoSanitize());
 
 // ========== RATE LIMITERS ==========
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 200,
   message: { error: "Too many requests. Please try again later." },
   standardHeaders: true,
   legacyHeaders: false
@@ -135,7 +134,6 @@ app.get("/", (req, res) => {
 app.get("/health", async (req, res) => {
   const dbState = mongoose.connection.readyState;
   const dbStatus = ["disconnected", "connected", "connecting", "disconnecting"];
-
   res.json({
     status: dbState === 1 ? "healthy" : "degraded",
     timestamp: new Date().toISOString(),
@@ -159,6 +157,9 @@ app.use((req, res) => {
   });
 });
 
+// ========== SENTRY ERROR HANDLER (must be before errorHandler) ==========
+app.use(Sentry.Handlers.errorHandler());
+
 // ========== ERROR HANDLER ==========
 app.use(errorHandler);
 
@@ -169,8 +170,8 @@ require("./src/config/socket")(io);
 connectDB().then(async () => {
   await createIndexes();
 
-  httpServer.listen(process.env.PORT || 3000, () => {
-    console.log(`🚀 STeX Logistics Server running on port ${process.env.PORT || 3000}`);
+  httpServer.listen(process.env.PORT || 10000, () => {
+    console.log(`🚀 STeX Logistics Server running on port ${process.env.PORT || 10000}`);
     console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`);
 
     if (process.env.NODE_ENV === "production") {
